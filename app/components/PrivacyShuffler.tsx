@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAccount, useConnect, useDisconnect, useSignMessage, usePublicClient } from 'wagmi';
 import { getAddress, Wallet, keccak256, toUtf8Bytes, Mnemonic, HDNodeWallet, formatEther, JsonRpcProvider } from 'ethers';
 import { createPublicClient, http } from 'viem';
-import { WalletIsland } from '@coinbase/onchainkit/wallet';
 import { TransferService } from '../services/TransferService';
 
 type Step = 'init' | 'generateSeed' | 'confirmSeed' | 'generateOneOff' | 'waitFunding' | 'forwarding' | 'complete';
@@ -23,18 +22,23 @@ type ShuffleState = {
   } | null;
 };
 
+type LogEntry = {
+  type: 'error' | 'warning' | 'info' | 'success';
+  message: string;
+};
+
 const FORWARD_DELAY = 30000; // 30 seconds for testing, change to 60000 for production
 const POLLING_INTERVAL = 5000; // Check balance every 5 seconds
 
-const PrivacyShuffler = () => {
+const PrivacyShuffler: React.FC = () => {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const wagmiPublicClient = usePublicClient();
   const { disconnect } = useDisconnect();
   
   const [step, setStep] = useState<Step>('init');
-  const [seedConfirmed, setSeedConfirmed] = useState(false);
-  const [logs, setLogs] = useState<Array<{ type: string; message: string }>>([]);
+  const [seedConfirmed, setSeedConfirmed] = useState<boolean>(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [shuffleState, setShuffleState] = useState<ShuffleState>({
     escapeHatch: null,
     oneOff: null,

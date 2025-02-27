@@ -7,7 +7,7 @@ import PrivacyShuffler from './components/PrivacyShuffler';
 import { FaEthereum } from 'react-icons/fa';
 import { useAccount, useDisconnect } from 'wagmi';
 
-export default function App() {
+const App: React.FC = () => {
   const { isConnected, address } = useAccount();
   const { disconnect } = useDisconnect();
 
@@ -203,4 +203,6 @@ export default function App() {
       </footer>
     </div>
   );
-}
+};
+
+export default App;
