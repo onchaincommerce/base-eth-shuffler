@@ -30,6 +30,7 @@ const PrivacyShuffler = () => {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const wagmiPublicClient = usePublicClient();
+  const { disconnect } = useDisconnect();
   
   const [step, setStep] = useState<Step>('init');
   const [seedConfirmed, setSeedConfirmed] = useState(false);
@@ -136,109 +137,78 @@ const PrivacyShuffler = () => {
     if (!wagmiPublicClient) return;
 
     try {
-      // Use the current connected network from wagmi instead of hardcoding mainnet
       const chainId = wagmiPublicClient.chain.id;
-      
-      // Check if we're on a testnet
       const isTestnet = wagmiPublicClient.chain.name.toLowerCase().includes('sepolia') || 
-                        wagmiPublicClient.chain.name.toLowerCase().includes('testnet') ||
-                        wagmiPublicClient.chain.testnet === true;
+                       wagmiPublicClient.chain.name.toLowerCase().includes('testnet') ||
+                       wagmiPublicClient.chain.testnet === true;
 
       setLogs(prev => [...prev, {
         type: 'info',
-        message: `Monitoring for funds on ${wagmiPublicClient.chain.name} (Chain ID: ${chainId}) and Base Mainnet`
+        message: `Monitoring for funds on ${wagmiPublicClient.chain.name} (Chain ID: ${chainId})`
       }]);
 
-      // Get RPC URL for the current chain
       const providerUrl = process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://sepolia.base.org';
-      
-      // Create TransferService instance that monitors both networks
       const transferService = new TransferService(providerUrl, oneOffAddress, true);
       
-      // Start monitoring balance on both networks
       let cleanupFunction: (() => void) | undefined;
       
       try {
         cleanupFunction = await transferService.watchBalanceChanges(
           oneOffAddress,
           async (network: 'testnet' | 'mainnet', balance: string) => {
-            // Only proceed if we detect a non-zero balance
             if (parseFloat(balance) > 0) {
               setLogs(prev => [...prev, {
                 type: 'info',
                 message: `Detected ${balance} ETH on ${network === 'testnet' ? 'Base Sepolia' : 'Base Mainnet'}. Preparing to forward...`
               }]);
               
-              // Cleanup the watcher as we've detected funds
               if (cleanupFunction) {
                 cleanupFunction();
               }
               
               setStep('forwarding');
 
-              // Wait for delay before forwarding
               await new Promise(resolve => setTimeout(resolve, FORWARD_DELAY));
 
               try {
-                // Create provider based on which network we detected funds on
                 const targetRpcUrl = network === 'testnet' 
                   ? (process.env.NEXT_PUBLIC_BASE_RPC_URL || 'https://sepolia.base.org') 
                   : 'https://mainnet.base.org';
                 const provider = new JsonRpcProvider(targetRpcUrl);
-                
-                // Create wallet instance
                 const wallet = new Wallet(privateKey, provider);
                 
-                // Check balance again to make sure it's still there
+                // Get current balance
                 const currentBalance = await provider.getBalance(oneOffAddress);
                 
                 if (currentBalance <= BigInt(0)) {
-                  throw new Error('Balance no longer available. Another process may have forwarded the funds.');
+                  throw new Error('Balance no longer available');
                 }
+
+                // Use fixed conservative values that we know work on Base
+                const gasLimit = BigInt(21000);
+                const gasPrice = BigInt(1000000000); // 1 gwei
                 
-                // Get gas price with a buffer
-                const gasPrice = await provider.getFeeData().then(fees => fees.gasPrice || BigInt(0));
-                const adjustedGasPrice = network === 'testnet'
-                  ? gasPrice + (gasPrice / BigInt(5)) // Add 20% buffer on testnets
-                  : gasPrice;
-                  
-                // Standard ETH transfer gas with a buffer
-                const gasLimit = BigInt(21500); // Slightly higher than standard 21000 to be safe
+                // Leave extra room for gas (0.0001 ETH = 100000000000000 wei)
+                const reservedForGas = BigInt(100000000000000);
                 
-                // Calculate gas costs with buffer
-                const gasCost = adjustedGasPrice * gasLimit;
+                // Send all balance minus reserved amount
+                const amountToSend = currentBalance - reservedForGas;
                 
-                // Add an additional safety buffer (especially important for testnets)
-                const gasCostWithSafetyBuffer = gasCost + (gasCost / BigInt(10)); // 10% extra buffer
-                
-                // Log the actual values for debugging
-                console.log(`Balance on ${network}:`, formatEther(currentBalance), 'ETH');
-                console.log('Gas cost with buffer:', formatEther(gasCostWithSafetyBuffer), 'ETH');
-                
-                // Double-check our balance is sufficient
-                if (currentBalance <= gasCostWithSafetyBuffer) {
-                  throw new Error(`Balance (${formatEther(currentBalance)} ETH) too low to cover gas (${formatEther(gasCostWithSafetyBuffer)} ETH).`);
+                if (amountToSend <= BigInt(0)) {
+                  throw new Error('Balance too low to cover gas costs');
                 }
-                
-                // Amount to forward (total minus gas cost with safety buffer)
-                // Important: Send a bit less than the full amount to prevent "overshot" errors
-                const amountToForward = currentBalance - gasCostWithSafetyBuffer;
-                
-                setLogs(prev => [...prev, {
-                  type: 'info',
-                  message: `Forwarding ${formatEther(amountToForward)} ETH to escape hatch from ${network === 'testnet' ? 'Base Sepolia' : 'Base Mainnet'}...`
-                }]);
-                
-                // Send the transaction
+
+                console.log('Current balance:', formatEther(currentBalance), 'ETH');
+                console.log('Reserved for gas:', formatEther(reservedForGas), 'ETH');
+                console.log('Amount to send:', formatEther(amountToSend), 'ETH');
+
+                // Simple legacy transaction with fixed gas price
                 const tx = await wallet.sendTransaction({
                   to: escapeHatchAddress,
-                  value: amountToForward,
-                  gasLimit: BigInt(gasLimit), // Convert to BigInt to match type
-                  gasPrice: adjustedGasPrice
-                }).catch((err) => {
-                  // Specifically catch and log transaction submission errors
-                  console.error("Transaction submission error:", err);
-                  throw new Error(err.message || "Failed to submit transaction");
+                  value: amountToSend,
+                  gasLimit: gasLimit,
+                  gasPrice: gasPrice,
+                  type: 0
                 });
                 
                 setLogs(prev => [...prev, {
@@ -246,80 +216,58 @@ const PrivacyShuffler = () => {
                   message: `Transaction sent: ${tx.hash}. Waiting for confirmation...`
                 }]);
                 
-                // Wait for receipt (timeout after 60 seconds on testnets)
-                const txTimeout = setTimeout(() => {
-                  if (network === 'testnet') {
-                    setLogs(prev => [...prev, {
-                      type: 'warning',
-                      message: 'Transaction taking longer than expected on testnet. Proceeding without waiting for confirmation.'
-                    }]);
-                    setStep('complete');
-                  }
-                }, 60000);
+                // Wait for receipt with timeout
+                const receiptPromise = tx.wait(1);
+                const timeoutPromise = new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Transaction confirmation timeout')), 60000)
+                );
                 
                 try {
-                  const receipt = await tx.wait(1); // Only wait for 1 confirmation to be faster
-                  if (receipt) {
-                    clearTimeout(txTimeout);
-                    
-                    setLogs(prev => [...prev, {
-                      type: 'success',
-                      message: `Transaction confirmed! Txn: ${receipt.hash}`
-                    }]);
-                    
-                    setStep('complete');
-                  }
-                } catch (waitError) {
-                  // Only clear timeout if we actually got an error
-                  clearTimeout(txTimeout);
-                  
-                  console.error("Transaction wait error:", waitError);
+                  const receipt = await Promise.race([receiptPromise, timeoutPromise]) as { hash: string };
                   setLogs(prev => [...prev, {
-                    type: 'warning', 
-                    message: `Transaction may not have been confirmed, but was submitted: ${tx.hash}`
+                    type: 'success',
+                    message: `Transaction confirmed! Hash: ${receipt.hash}`
                   }]);
-                  
-                  // Still consider it complete since we've done everything we can
                   setStep('complete');
+                } catch (waitError: any) {
+                  // If it's a timeout, the transaction might still confirm later
+                  if (waitError?.message === 'Transaction confirmation timeout') {
+                    setLogs(prev => [...prev, {
+                      type: 'warning',
+                      message: `Transaction submitted but confirmation taking longer than expected. Hash: ${tx.hash}`
+                    }]);
+                    setStep('complete');
+                  } else {
+                    throw waitError;
+                  }
                 }
-              } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+              } catch (error: any) {
                 console.error("Forwarding error:", error);
-                
                 setLogs(prev => [...prev, {
                   type: 'error',
-                  message: `Error forwarding funds: ${errorMessage}`
+                  message: `Error forwarding funds: ${error?.message || 'Unknown error'}`
                 }]);
-                
-                // Go back to waiting so user can manually forward
                 setStep('waitFunding');
               }
             }
           }
         );
         
-        // Return clean-up function
         return cleanupFunction;
-      } catch (error) {
+      } catch (error: any) {
         console.error("Monitoring error:", error);
-        
         setLogs(prev => [...prev, {
           type: 'error',
-          message: `Error setting up monitoring: ${error instanceof Error ? error.message : 'Unknown error'}`
+          message: `Error setting up monitoring: ${error?.message || 'Unknown error'}`
         }]);
-        
-        // Allow user to manually forward
         setStep('waitFunding');
       }
-    } catch (error) {
-      console.error("Monitoring error:", error);
-      
+    } catch (error: any) {
+      console.error("Setup error:", error);
       setLogs(prev => [...prev, {
         type: 'error',
-        message: `Error setting up monitoring: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `Setup error: ${error?.message || 'Unknown error'}`
       }]);
-      
-      // Allow user to manually forward
       setStep('waitFunding');
     }
   }, [wagmiPublicClient]);
@@ -476,7 +424,8 @@ const PrivacyShuffler = () => {
       const isTestnet = networkToUse === 'testnet';
       
       // Get current gas price with a buffer for testnets
-      const gasPrice = await provider.getFeeData().then(fees => fees.gasPrice || BigInt(0));
+      const feeData = await provider.getFeeData();
+      const gasPrice = feeData.gasPrice || BigInt(0);
       const adjustedGasPrice = isTestnet 
         ? gasPrice + (gasPrice / BigInt(4)) // Add 25% buffer on testnets for manual forwarding
         : gasPrice;
@@ -654,24 +603,16 @@ const PrivacyShuffler = () => {
         return (
           <div className="space-y-8">
             <div>
-              <h3 className="cosmic-title text-3xl py-4 font-space">Nebula Privacy Shuffler</h3>
-              <p className="text-gray-300">
-                Generate a secure escape hatch address to receive your cosmic funds.
-                This address will be deterministically generated from your signature.
-              </p>
-            </div>
-            
-            <div className="wallet-container mb-6 mt-6">
-              {/* Standalone WalletIsland with no wrapper styling */}
-              <WalletIsland />
+              <h3 className="cosmic-title text-3xl py-4 font-space">Base ETH Shuffler</h3>
+              <div className="prose max-w-none mb-6">
+                <p>
+                  Don&apos;t let others track your onchain activity. Use this tool to break the link between your addresses.
+                </p>
+              </div>
             </div>
             
             {isConnected && (
               <div className="flex flex-col space-y-4 mt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-crypto-secondary">Connected: {address?.substring(0, 6)}...{address?.substring(address.length - 4)}</span>
-                </div>
-                
                 <input
                   type="text"
                   placeholder="Enter a recovery key (optional)"
@@ -912,30 +853,27 @@ const PrivacyShuffler = () => {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {renderStepContent()}
-      
-      {/* Activity Log */}
-      {logs.length > 0 && (
-        <div className="mt-10">
-          <h4 className="cosmic-title text-xl mb-4 font-space">Activity Log</h4>
-          <div className="crypto-card p-3 max-h-48 overflow-y-auto custom-scrollbar space-y-3">
-            {logs.map((log, index) => (
-              <div
-                key={index}
-                className={`p-3 rounded-lg text-sm ${
-                  log.type === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/30' :
-                  log.type === 'warning' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30' :
-                  log.type === 'success' ? 'bg-crypto-secondary/10 text-crypto-secondary border border-crypto-secondary/30' :
-                  'bg-crypto-dark-600/40 text-gray-300 border border-crypto-primary/20'
-                }`}
-              >
-                {log.message}
-              </div>
-            ))}
-          </div>
+
+      <div className="mt-6">
+        <div className="space-y-2">
+          {logs.map((log, index) => (
+            <div
+              key={index}
+              className={`p-3 rounded ${
+                log.type === 'error'
+                  ? 'bg-error/20 text-error'
+                  : log.type === 'warning'
+                  ? 'bg-warning/20 text-warning'
+                  : 'bg-info/20 text-info'
+              }`}
+            >
+              {log.message}
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 };

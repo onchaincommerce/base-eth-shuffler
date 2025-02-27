@@ -4,11 +4,13 @@ import { ConnectWallet, Wallet } from '@coinbase/onchainkit/wallet';
 import { Identity, Name } from '@coinbase/onchainkit/identity';
 import { motion } from 'framer-motion';
 import PrivacyShuffler from './components/PrivacyShuffler';
-import { AddressVerifier } from './components/AddressVerifier';
-import { FiShield, FiLock, FiEye, FiRefreshCw } from 'react-icons/fi';
 import { FaEthereum } from 'react-icons/fa';
+import { useAccount, useDisconnect } from 'wagmi';
 
 export default function App() {
+  const { isConnected, address } = useAccount();
+  const { disconnect } = useDisconnect();
+
   return (
     <div className="grid-background min-h-screen">
       {/* Animated Background Gradient */}
@@ -35,24 +37,31 @@ export default function App() {
             animate={{ opacity: 1, x: 0 }}
             className="wallet-container"
           >
-            <Wallet>
-              <ConnectWallet>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="px-4 py-2 rounded-lg font-medium transition-all duration-200 
-                           bg-crypto-dark-600 border border-crypto-primary/30 text-crypto-secondary
-                           hover:bg-crypto-cosmic/40 hover:text-white hover:border-crypto-secondary/50"
+            {isConnected ? (
+              <div className="flex items-center gap-4">
+                <span className="text-sm opacity-75">{address?.slice(0, 6)}...{address?.slice(-4)}</span>
+                <button 
+                  onClick={() => disconnect()} 
+                  className="btn btn-sm btn-outline"
                 >
-                  <span className="flex items-center space-x-2">
-                    <FiLock className="w-4 h-4" />
-                    <Identity>
-                      <Name />
-                    </Identity>
-                  </span>
-                </motion.button>
-              </ConnectWallet>
-            </Wallet>
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <Wallet>
+                <ConnectWallet>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="px-4 py-2 rounded-lg font-medium transition-all duration-200 
+                             bg-crypto-dark-600 border border-crypto-primary/30 text-crypto-secondary
+                             hover:bg-crypto-cosmic/40 hover:text-white hover:border-crypto-secondary/50"
+                  >
+                    Connect Wallet
+                  </motion.button>
+                </ConnectWallet>
+              </Wallet>
+            )}
           </motion.div>
         </div>
       </header>
@@ -71,67 +80,20 @@ export default function App() {
             </h2>
             <p className="text-gray-300 text-lg max-w-2xl mx-auto">
               Protect your ETH privacy on Base with our advanced shuffling mechanism. 
-              Create deterministic addresses and shuffle your funds with military-grade privacy.
+              Create deterministic addresses and shuffle your funds with strong cryptographic privacy.
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-2 gap-8 mb-16">
+          <div className="flex justify-center mb-16">
             <motion.div
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="crypto-card"
+              className="crypto-card w-full max-w-2xl"
             >
               <PrivacyShuffler />
             </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 40 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="crypto-card"
-            >
-              <AddressVerifier />
-            </motion.div>
           </div>
-
-          {/* Features Section */}
-          <motion.div
-            initial={{ opacity: 0, y: 60 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-            className="grid md:grid-cols-3 gap-8"
-          >
-            <div className="glass-panel p-8 hover:bg-opacity-60 transition-all duration-300">
-              <div className="w-14 h-14 mb-6 rounded-2xl bg-gradient-to-r from-crypto-primary to-crypto-secondary p-4">
-                <FiShield className="w-full h-full text-white" />
-              </div>
-              <h3 className="text-xl font-semibold mb-4 text-gradient">Deterministic Addresses</h3>
-              <p className="text-gray-300">
-                Generate secure addresses derived from your wallet signature, maintaining full control without exposing private keys.
-              </p>
-            </div>
-
-            <div className="glass-panel p-8 hover:bg-opacity-60 transition-all duration-300">
-              <div className="w-14 h-14 mb-6 rounded-2xl bg-gradient-to-r from-crypto-secondary to-crypto-accent p-4">
-                <FiEye className="w-full h-full text-white" />
-              </div>
-              <h3 className="text-xl font-semibold mb-4 text-gradient">Customizable Privacy</h3>
-              <p className="text-gray-300">
-                Choose from multiple privacy levels with different shuffle counts, time delays, and amount variations.
-              </p>
-            </div>
-
-            <div className="glass-panel p-8 hover:bg-opacity-60 transition-all duration-300">
-              <div className="w-14 h-14 mb-6 rounded-2xl bg-gradient-to-r from-crypto-accent to-crypto-neon p-4">
-                <FiRefreshCw className="w-full h-full text-white" />
-              </div>
-              <h3 className="text-xl font-semibold mb-4 text-gradient">Secure Transfers</h3>
-              <p className="text-gray-300">
-                Execute transfers with random delays and amount variations to enhance transaction privacy.
-              </p>
-            </div>
-          </motion.div>
 
           {/* How It Works Section */}
           <motion.div
@@ -167,7 +129,7 @@ export default function App() {
                   </ul>
                   <p>
                     These are mathematically mixed together (like shuffling two decks of cards) to create your unique seed phrase. 
-                    This dual-source approach ensures that even if someone guesses your recovery key, they still can't access your funds 
+                    This dual-source approach ensures that even if someone guesses your recovery key, they still can&apos;t access your funds 
                     without the random numbers (which are safely stored in your browser).
                   </p>
                 </div>
@@ -183,7 +145,7 @@ export default function App() {
                 </h3>
                 <div className="space-y-4 text-gray-300">
                   <p>
-                    One-off addresses are temporary addresses that automatically forward funds to your escape hatch. They're created using:
+                    One-off addresses are temporary addresses that automatically forward funds to your escape hatch. They&apos;re created using:
                   </p>
                   <ul className="list-disc pl-5 space-y-2">
                     <li>
@@ -193,11 +155,11 @@ export default function App() {
                       <strong className="text-crypto-secondary">Current Timestamp:</strong> Makes each address unique, even if created by the same wallet
                     </li>
                     <li>
-                      <strong className="text-crypto-secondary">Decorrelated Paths:</strong> Uses special derivation paths that can't be linked to your wallet's original seed
+                      <strong className="text-crypto-secondary">Decorrelated Paths:</strong> Uses special derivation paths that can&apos;t be linked to your wallet&apos;s original seed
                     </li>
                   </ul>
                   <p>
-                    When funds arrive at a one-off address, they're automatically forwarded to your escape hatch. The one-off address 
+                    When funds arrive at a one-off address, they&apos;re automatically forwarded to your escape hatch. The one-off address 
                     is then discarded, leaving no permanent connection between your main wallet and your escape hatch.
                   </p>
                 </div>
@@ -211,9 +173,9 @@ export default function App() {
               </h4>
               <p className="text-gray-300">
                 Our system uses advanced HD (Hierarchical Deterministic) path generation that breaks the mathematical relationship 
-                with your wallet's original derivation path. This means even if someone knows your public key or other addresses, 
+                with your wallet&apos;s original derivation path. This means even if someone knows your public key or other addresses, 
                 they cannot link these privacy-enhanced addresses back to your main wallet. Each address uses a unique derivation 
-                path based on random entropy, making it computationally impossible to correlate with your original wallet's HD tree.
+                path based on random entropy, making it computationally impossible to correlate with your original wallet&apos;s HD tree.
               </p>
             </div>
 
